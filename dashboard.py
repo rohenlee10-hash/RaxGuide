@@ -2,10 +2,16 @@ import streamlit as st
 import firebase_admin
 from firebase_admin import credentials, firestore
 import pandas as pd
+import os
+import json
 
 # --- Firebase init (safe for Streamlit reruns) ---
 if not firebase_admin._apps:
-    cred = credentials.Certificate("serviceAccountKey.json")
+    firebase_creds = os.environ.get("FIREBASE_CREDENTIALS")
+    if firebase_creds:
+        cred = credentials.Certificate(json.loads(firebase_creds))
+    else:
+        cred = credentials.Certificate("serviceAccountKey.json")
     firebase_admin.initialize_app(cred)
 db = firestore.client()
 
