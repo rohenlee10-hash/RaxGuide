@@ -172,9 +172,9 @@ total_flip = flip_opps[flip_opps > 0].sum() if len(flip_opps) else 0
 for col, val, label in [
     (col1, len(df), "Players Tracked"),
     (col2, buy_signals, "Buy Signals"),
-    (col3, f"{total_invested:,.0f}", "RAX Invested"),
+    (col3, f"+{total_flip:,.0f}", "Potential Profit"),
     (col4, f"{realized_pl:+,.0f}", "Realized P/L"),
-    (col5, f"+{total_flip:,.0f}", "Flip Potential"),
+    (col5, len(df[df['deal_score'] >= 40]) if 'deal_score' in df.columns else 0, "Fair+ Deals"),
 ]:
     with col:
         color = "#ff4444" if "P/L" in label and realized_pl < 0 else "#00ff88"
@@ -206,14 +206,14 @@ def render_players(data, tab_key="default"):
 
     col_f1, col_f2 = st.columns([2, 2])
     with col_f1:
-        sort_by = st.selectbox("Sort by", ["Deal Score", "Buy Price", "Daily RAX", "Flip Profit"], key=f"sort_{tab_key}")
+        sort_by = st.selectbox("Sort by", ["Deal Score", "Buy Price", "Flip Profit"], key=f"sort_{tab_key}")
     with col_f2:
         search = st.text_input("Search", placeholder="Player name...", key=f"search_{tab_key}")
 
     if search:
         data = data[data['name'].str.contains(search, case=False, na=False)]
 
-    sort_map = {"Deal Score": "deal_score", "Buy Price": "buy_price", "Daily RAX": "daily_rax_earn", "Flip Profit": "flip_profit"}
+    sort_map = {"Deal Score": "deal_score", "Buy Price": "buy_price", "Flip Profit": "flip_profit"}
     sc = sort_map.get(sort_by, "deal_score")
     if sc in data.columns:
         data = data.sort_values(sc, ascending=False, na_position='last')
@@ -262,10 +262,9 @@ def render_players(data, tab_key="default"):
             <div class='player-stats'>
                 <div class='stat-item'><div class='stat-val'>{buy:,.0f}</div><div class='stat-lbl'>Buy Price</div></div>
                 <div class='stat-item'><div class='stat-val'>{market_str}</div><div class='stat-lbl'>Market Val</div></div>
-                <div class='stat-item'><div class='stat-val'>{daily_rax:,.0f}</div><div class='stat-lbl'>Daily RAX</div></div>
                 <div class='stat-item'><div class='stat-val'>{breakeven_str}</div><div class='stat-lbl'>Breakeven</div></div>
                 <div class='stat-item'><div class='stat-val'>{rr_str}</div><div class='stat-lbl'>R/R</div></div>
-                <div class='stat-item'><div class='stat-val' style='color:#00ff88;'>{flip_str}</div><div class='stat-lbl'>Flip Profit</div></div>
+                <div class='stat-item'><div class='stat-val' style='color:#00ff88;'>{flip_str}</div><div class='stat-lbl'>Potential Profit</div></div>
                 <div class='stat-item'><div class='stat-val' style='color:{pl_color};'>{pl_str}</div><div class='stat-lbl'>My P/L</div></div>
             </div>
         </div>
