@@ -265,4 +265,67 @@ if 'upcoming_games' in df.columns and df['upcoming_games'].notna().any():
     chart_df = df[['name', 'upcoming_games']].dropna().sort_values('upcoming_games', ascending=False).head(10)
     st.bar_chart(chart_df.set_index('name')['upcoming_games'])
 
+# --- Daily Flip Profit Section ---
+st.markdown("<br>", unsafe_allow_html=True)
+st.markdown("""
+<div style='font-size:1.3rem; font-weight:800; color:#ffffff; margin-bottom:12px;'>
+    💸 Daily Flip Opportunities
+</div>
+<div style='color:#666; font-size:0.85rem; margin-bottom:16px;'>
+    Players where current auction price is below fair value — instant profit if you flip today.
+</div>
+""", unsafe_allow_html=True)
+
+flip_df = df.copy()
+flip_df = flip_df[flip_df.get('fair_value', pd.Series(dtype=float)).notna()] if 'fair_value' in flip_df.columns else pd.DataFrame()
+
+if not flip_df.empty:
+    flip_df = flip_df[flip_df['fair_value'] > flip_df['buy_price']]
+    flip_df['flip_profit'] = flip_df['fair_value'] - flip_df['buy_price']
+    flip_df['flip_roi'] = ((flip_df['flip_profit']) / flip_df['buy_price'] * 100).round(1)
+    flip_df = flip_df[flip_df['sport'].isin(['NBA', 'MLB', 'GOLF'])] if 'sport' in flip_df.columns else flip_df
+    flip_df = flip_df.sort_values('flip_profit', ascending=False).head(15)
+
+    total_flip = flip_df['flip_profit'].sum()
+    st.markdown(f"""
+    <div style='background:linear-gradient(135deg,#0a2a0a,#0a1a2a); border:1px solid #00ff88;
+    border-radius:12px; padding:16px; margin-bottom:16px; text-align:center;'>
+        <div style='font-size:2rem; font-weight:900; color:#00ff88;'>+{total_flip:,.0f} RAX</div>
+        <div style='color:#888; font-size:0.8rem;'>Total potential profit if you flip all {len(flip_df)} cards today</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    for _, row in flip_df.iterrows():
+        rarity = row.get('rarity', 'Common')
+        rc = rarity_color(rarity)
+        buy = row.get('buy_price') or 0
+        fair = row.get('fair_value') or 0
+        profit = row.get('flip_profit') or 0
+        roi = row.get('flip_roi') or 0
+        sport = row.get('sport', '')
+
+        st.markdown(f"""
+        <div style='background:#0d1f0d; border:1px solid #00aa44; border-radius:10px;
+        padding:14px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;'>
+            <div>
+                <div style='font-weight:700; color:#fff; font-size:1rem;'>{row['name']}</div>
+                <div style='font-size:0.78rem; color:#888; margin-top:3px;'>
+                    <span style='color:{rc};'>{rarity.upper()}</span> · {sport}
+                </div>
+            </div>
+            <div style='display:flex; gap:24px; text-align:center;'>
+                <div><div style='color:#aaa; font-size:0.7rem;'>BUY AT</div>
+                    <div style='color:#fff; font-weight:700;'>{buy:,.0f}</div></div>
+                <div><div style='color:#aaa; font-size:0.7rem;'>FAIR VALUE</div>
+                    <div style='color:#00ccff; font-weight:700;'>{fair:,.0f}</div></div>
+                <div><div style='color:#aaa; font-size:0.7rem;'>PROFIT</div>
+                    <div style='color:#00ff88; font-weight:900; font-size:1.1rem;'>+{profit:,.0f}</div></div>
+                <div><div style='color:#aaa; font-size:0.7rem;'>ROI</div>
+                    <div style='color:#ffaa00; font-weight:700;'>{roi:.1f}%</div></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+else:
+    st.markdown("<div style='color:#555; padding:20px;'>No flip opportunities found right now. Check back soon.</div>", unsafe_allow_html=True)
+
 st.markdown("<br><div style='text-align:center; color:#333; font-size:0.75rem;'>RaxCartel · Data from realapp.tools · Refreshes every 30s</div>", unsafe_allow_html=True)
