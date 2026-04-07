@@ -199,16 +199,16 @@ def deal_label(score):
     if score >= 20: return ("EXPENSIVE", "#ff8800")
     return ("AVOID", "#ff4444")
 
-def render_players(data):
+def render_players(data, tab_key="default"):
     if data.empty:
         st.markdown("<div style='color:#2a4a2a; padding:20px;'>No players found.</div>", unsafe_allow_html=True)
         return
 
     col_f1, col_f2 = st.columns([2, 2])
     with col_f1:
-        sort_by = st.selectbox("Sort by", ["Deal Score", "Buy Price", "Daily RAX", "Flip Profit"], key=f"sort_{data.iloc[0].get('sport','x')}")
+        sort_by = st.selectbox("Sort by", ["Deal Score", "Buy Price", "Daily RAX", "Flip Profit"], key=f"sort_{tab_key}")
     with col_f2:
-        search = st.text_input("Search", placeholder="Player name...", key=f"search_{data.iloc[0].get('sport','x')}")
+        search = st.text_input("Search", placeholder="Player name...", key=f"search_{tab_key}")
 
     if search:
         data = data[data['name'].str.contains(search, case=False, na=False)]
@@ -277,18 +277,18 @@ with tab_golf:
     if golf_df.empty:
         st.info("No golf players yet. Run the scraper.")
     else:
-        render_players(golf_df)
+        render_players(golf_df, "golf")
 
 with tab_nba:
     nba_df = df[df.get('sport', pd.Series(dtype=str)).str.upper() == 'NBA'] if 'sport' in df.columns else df
-    render_players(nba_df)
+    render_players(nba_df, "nba")
 
 with tab_mlb:
     mlb_df = df[df.get('sport', pd.Series(dtype=str)).str.upper() == 'MLB'] if 'sport' in df.columns else df
-    render_players(mlb_df)
+    render_players(mlb_df, "mlb")
 
 with tab_all:
-    render_players(df)
+    render_players(df, "all")
 
 with tab_flip:
     st.markdown("""
