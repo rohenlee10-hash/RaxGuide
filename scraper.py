@@ -72,6 +72,17 @@ GOLF_PLAYERS = [
 ]
 
 
+def call_api(action, payload={}):
+    resp = requests.post(
+        f"{SUPABASE_URL}/functions/v1/market-data",
+        headers=HEADERS,
+        json={"action": action, "payload": payload},
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 def send_email_alert(buy_signals):
     """Sends an email with the top buy signals."""
     gmail = os.environ.get("GMAIL_ADDRESS")
