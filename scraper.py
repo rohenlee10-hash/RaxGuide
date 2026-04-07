@@ -1,14 +1,15 @@
 """
-scraper.py — Auto-pulls NBA, MLB, GOLF players from realapp.tools into Firebase.
+scraper.py — Auto-pulls NBA, MLB, GOLF players from realapp.tools API into Firebase.
 Run with: python3 scraper.py
 """
 
 import firebase_admin
 from firebase_admin import credentials, firestore
 import requests
-import re
 import os
 import json
+import smtplib
+from email.mime.text import MIMEText
 from datetime import datetime
 
 # --- Firebase Setup ---
@@ -25,135 +26,189 @@ except FileNotFoundError:
     print("Error: serviceAccountKey.json not found.")
     exit()
 
-# --- Config ---
-ALLOWED_SPORTS = {"NBA", "MLB", "GOLF"}
+# --- realapp.tools API config ---
+SUPABASE_URL = "https://mfsyhtuqybbxprgwwykd.supabase.co"
+TOKEN = "sb_publishable_Al7QsFGnNTlknoI8KVxjag_JUwrytZy"
+HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
+
+ALLOWED_SPORTS = {"nba", "mlb", "golf"}
+
 RAX_EARNINGS = {
     "General": 200, "Common": 1000, "Uncommon": 1500,
     "Rare": 2000, "Epic": 5000, "Legendary": 12500,
     "Mystic": 37500, "Iconic": 999999
 }
 
-def scrape_realapp_tools():
-    """Scrapes the realapp.tools discovery page and returns a list of player dicts."""
-    print("Fetching realapp.tools...")
-    try:
-        resp = requests.get("https://realapp.tools", timeout=10)
-        resp.raise_for_status()
-    except Exception as e:
-        print(f"Failed to fetch realapp.tools: {e}")
-        return []
 
-    text = resp.text
-    players = []
-
-    # Each player block looks like:
-    # [Player Name](https://realapp.tools/players/ID/SEASON/slug)
-    # RARITY SPORT ... PRICE X,XXX Y.YY R/R DEAL SCORE ZZ/95
-    pattern = re.compile(
-        r'\[([^\]]+)\]\(https://realapp\.tools/players/(\d+)/(\d+)/([^)]+)\)'
-        r'(?:[^\[]*?)(GENERAL|COMMON|UNCOMMON|RARE|EPIC|LEGENDARY|MYSTIC|ICONIC)'
-        r'(NBA|MLB|GOLF|NFL|NHL|NCAAM|NCAAF|WNBA|MMA|UFC)'
-        r'.*?PRICE\s*([\d,]+)'
-        r'\s*([\d.]+)\s*R/R'
-        r'.*?DEAL\s*SCORE\s*(\d+)/95',
-        re.DOTALL | re.IGNORECASE
-    )
-
-    seen = set()
-    for m in pattern.finditer(text):
-        name    = m.group(1).strip()
-        pid     = m.group(2)
-        season  = m.group(3)
-        rarity  = m.group(5).capitalize()
-        sport   = m.group(6).upper()
-        price   = int(m.group(7).replace(',', ''))
-        rr      = float(m.group(8))
-        deal    = int(m.group(9))
-
-        if sport not in ALLOWED_SPORTS:
-            continue
-
-        # Deduplicate by name+rarity+season (keep highest deal score)
-        key = f"{name}_{rarity}_{season}"
-        if key in seen:
-            continue
-        seen.add(key)
-
-        daily_rax = RAX_EARNINGS.get(rarity, 1000)
-        breakeven = round(price / daily_rax, 1) if daily_rax and price else None
-
-        players.append({
-            "name": name,
-            "player_id": pid,
-            "season": season,
-            "sport": sport,
-            "rarity": rarity,
-            "market_value": price,
-            "rr_ratio": rr,
-            "deal_score": deal,
-            "buy_price": price,
-            "daily_rax_earn": daily_rax,
-            "days_to_breakeven": breakeven,
-            "sell_price": None,
-            "profit_loss": None,
-            "rating_progress": 0,
-            "total_rax_invested": 0,
-            "avg_points_last_5": 0.0,
-            "games_this_week": 0,
-            "schedule_strength": "Unknown",
-            "upcoming_games": 0,
-            "is_heating_up": False,
-            "last_updated": datetime.now().isoformat()
-        })
-
-    return players
-
-
-def save_to_firebase(players):
-    """Saves scraped players to Firebase, updating existing ones."""
-    if not players:
-        print("No players to save.")
+def send_email_alert(buy_signals):
+    """Sends an email with the top buy signals."""
+    gmail = os.environ.get("GMAIL_ADDRESS")
+    password = os.environ.get("GMAIL_PASSWORD")
+    if not gmail or not password:
+        print("No email credentials set, skipping alert.")
+        return
+    if not buy_signals:
         return
 
-    batch_size = 0
-    for p in players:
-        doc_id = f"{p['name']} ({p['rarity']} {p['season']})"
-        ref = db.collection('market_watch').document(doc_id)
+    lines = [f"🔥 RaxCartel — {len(buy_signals)} BUY signals found\n"]
+    for p in buy_signals:
+        lines.append(
+            f"• {p['name']} ({p['rarity']} {p['season']}) — {p['sport']}\n"
+            f"  Price: {p['market_value']:,} RAX | R/R: {p['rr_ratio']:.1f} | Deal: {p['deal_score']}/95\n"
+            f"  Breakeven: {p['days_to_breakeven']} days\n"
+        )
+    lines.append("\nView dashboard: https://raxcartel.onrender.com")
+
+    msg = MIMEText("\n".join(lines))
+    msg["Subject"] = f"🟢 RaxCartel: {len(buy_signals)} Buy Signals"
+    msg["From"] = gmail
+    msg["To"] = gmail
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(gmail, password)
+            server.send_message(msg)
+        print(f"Email sent to {gmail} with {len(buy_signals)} buy signals.")
+    except Exception as e:
+        print(f"Email failed: {e}")
+
+
+
+    resp = requests.post(
+        f"{SUPABASE_URL}/functions/v1/market-data",
+        headers=HEADERS,
+        json={"action": action, "payload": payload},
+        timeout=15
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def fetch_players(season=2026):
+    print(f"Fetching players for season {season}...")
+    data = call_api("get_homepage_cards", {"season": season, "filters": {}})
+    cards = data.get("cards", [])
+    print(f"  Got {len(cards)} cards from homepage.")
+    return cards
+
+
+def fetch_steals(season=2026):
+    print(f"Fetching steals/undervalued for season {season}...")
+    data = call_api("get_steals_cards", {"season": season})
+    cards = data.get("cards", [])
+    print(f"  Got {len(cards)} steal cards.")
+    return cards
+
+
+def save_players(cards):
+    allowed = [c for c in cards if c.get("sport", "").lower() in ALLOWED_SPORTS]
+    print(f"\nSaving {len(allowed)} NBA/MLB/GOLF players to Firebase...\n")
+
+    saved = 0
+    for c in allowed:
+        name = c.get("playerName", "Unknown")
+        sport = c.get("sport", "").upper()
+        season = str(c.get("season", "2026"))
+        rarity = c.get("rarityLabel", "Common")
+        price = c.get("listingPrice") or 0
+        rr = c.get("currentRr") or 0
+        avg_rr = c.get("avgRr") or 0
+        fair_value = c.get("fairValue") or 0
+        deal_score = c.get("trendingScore") or 0
+        valuation = c.get("valuationStatus", "")
+        daily_rax = RAX_EARNINGS.get(rarity, 1000)
+        breakeven = round(price / daily_rax, 1) if daily_rax and price else None
+        profit_if_sold = fair_value - price if fair_value and price else None
+        roi = round((profit_if_sold / price) * 100, 1) if profit_if_sold and price else None
+
+        doc_id = f"{name} ({rarity} {season})"
+        ref = db.collection("market_watch").document(doc_id)
         existing = ref.get()
 
+        player_data = {
+            "name": name,
+            "sport": sport,
+            "season": season,
+            "rarity": rarity,
+            "market_value": price,
+            "fair_value": fair_value,
+            "rr_ratio": rr,
+            "avg_rr": avg_rr,
+            "deal_score": deal_score,
+            "valuation_status": valuation,
+            "daily_rax_earn": daily_rax,
+            "days_to_breakeven": breakeven,
+            "profit_if_sold": profit_if_sold,
+            "roi_pct": roi,
+            "last_updated": datetime.now().isoformat()
+        }
+
         if existing.exists:
-            # Only update market data, don't overwrite buy_price if user set it
-            ref.update({
-                "market_value": p["market_value"],
-                "rr_ratio": p["rr_ratio"],
-                "deal_score": p["deal_score"],
-                "daily_rax_earn": p["daily_rax_earn"],
-                "last_updated": p["last_updated"]
-            })
+            ref.update(player_data)
+            status = "Updated"
         else:
-            ref.set(p)
+            player_data.update({
+                "buy_price": price,
+                "sell_price": None,
+                "profit_loss": None,
+                "rating_progress": 0,
+                "total_rax_invested": 0,
+                "avg_points_last_5": 0.0,
+                "games_this_week": 0,
+                "schedule_strength": "Unknown",
+                "upcoming_games": 0,
+            })
+            ref.set(player_data)
+            status = "Added"
 
-        batch_size += 1
-        print(f"  {'Updated' if existing.exists else 'Added':8} {doc_id:<40} | {p['sport']:<5} | {p['rarity']:<10} | {p['market_value']:>6,} RAX | Deal {p['deal_score']}/95")
+        tag = "🟢 BUY" if deal_score >= 60 else ("🟡 FAIR" if deal_score >= 40 else "🔴 SKIP")
+        print(f"  {status:7} {doc_id:<45} {sport:<5} {rarity:<10} {price:>6,} RAX  {tag}")
+        saved += 1
 
-    print(f"\nDone. {batch_size} players saved to Firebase.")
+    print(f"\nDone. {saved} players saved.")
 
 
 def main():
     print("\n=== RaxCartel Auto-Scraper ===")
-    print(f"Sports: {', '.join(ALLOWED_SPORTS)}\n")
-    players = scrape_realapp_tools()
+    season = 2026
 
-    if not players:
-        print("No players found. The site may have changed structure.")
-        return
+    all_cards = []
+    homepage = fetch_players(season)
+    steals = fetch_steals(season)
 
-    nba   = [p for p in players if p['sport'] == 'NBA']
-    mlb   = [p for p in players if p['sport'] == 'MLB']
-    golf  = [p for p in players if p['sport'] == 'GOLF']
+    # Merge, deduplicate by listingId
+    seen = set()
+    for c in homepage + steals:
+        lid = c.get("listingId")
+        if lid not in seen:
+            seen.add(lid)
+            all_cards.append(c)
 
-    print(f"Found: {len(nba)} NBA | {len(mlb)} MLB | {len(golf)} GOLF\n")
-    save_to_firebase(players)
+    print(f"\nTotal unique cards: {len(all_cards)}")
+    save_players(all_cards)
+
+    # Email alert for buy signals
+    buy_signals = [
+        c for c in all_cards
+        if c.get("sport", "").lower() in {"nba", "mlb", "golf"}
+        and c.get("trendingScore", 0) >= 60
+    ]
+    formatted = []
+    for c in buy_signals:
+        rarity = c.get("rarityLabel", "Common")
+        daily_rax = RAX_EARNINGS.get(rarity, 1000)
+        price = c.get("listingPrice") or 0
+        formatted.append({
+            "name": c.get("playerName"),
+            "sport": c.get("sport", "").upper(),
+            "season": str(c.get("season", "2026")),
+            "rarity": rarity,
+            "market_value": price,
+            "rr_ratio": c.get("currentRr") or 0,
+            "deal_score": c.get("trendingScore") or 0,
+            "days_to_breakeven": round(price / daily_rax, 1) if daily_rax and price else None
+        })
+    send_email_alert(formatted)
 
 
 if __name__ == "__main__":
