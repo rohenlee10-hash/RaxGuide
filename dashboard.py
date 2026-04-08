@@ -654,7 +654,48 @@ with tab_boost:
     </div>
     """, unsafe_allow_html=True)
 
-    boost_sport = st.selectbox("Sport", ["NBA", "MLB"], key="boost_sport")
+    boost_sport = st.selectbox("Sport", ["NBA", "MLB", "Golf"], key="boost_sport")
+
+    @st.cache_data(ttl=3600)
+    def get_golf_birdie_stats():
+        """Fetch birdies per round and eagles % from PGA Tour GraphQL."""
+        PGA_HEADERS = {
+            "User-Agent": "Mozilla/5.0",
+            "x-api-key": "da2-gsrx5bibzbb4njvhl7t37wqyl4",
+            "Content-Type": "application/json"
+        }
+        birdies, eagles = {}, {}
+        try:
+            resp = requests.post(
+                "https://orchestrator.pgatour.com/graphql",
+                headers=PGA_HEADERS,
+                json={"query": """{ statDetails(tourCode: R, statId: "02415", year: 2026) { rows { ... on StatDetailsPlayer { playerName rank stats { statValue } } } } }"""},
+                timeout=10
+            )
+            for r in resp.json().get("data", {}).get("statDetails", {}).get("rows", []):
+                val = r.get("stats", [{}])[0].get("statValue", "0")
+                try:
+                    birdies[r["playerName"]] = float(val)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            resp2 = requests.post(
+                "https://orchestrator.pgatour.com/graphql",
+                headers=PGA_HEADERS,
+                json={"query": """{ statDetails(tourCode: R, statId: "02416", year: 2026) { rows { ... on StatDetailsPlayer { playerName rank stats { statValue } } } } }"""},
+                timeout=10
+            )
+            for r in resp2.json().get("data", {}).get("statDetails", {}).get("rows", []):
+                val = r.get("stats", [{}])[0].get("statValue", "0")
+                try:
+                    eagles[r["playerName"]] = float(val.replace("%",""))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        return birdies, eagles
 
     if boost_sport == "NBA":
         nba_games = get_nba_games_today() if 'get_nba_games_today' in dir() else []
@@ -699,6 +740,88 @@ with tab_boost:
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
+
+    if boost_sport == "Golf":
+        birdies, eagles = get_golf_birdie_stats()
+
+        # Booster RAX estimates based on Real app docs (Legendary NBA 3pt = 20 RAX)
+        BOOSTER_RAX = {
+            "Common":    {"birdie": 3,  "eagle": 8},
+            "Uncommon":  {"birdie": 5,  "eagle": 12},
+            "Rare":      {"birdie": 8,  "eagle": 20},
+            "Epic":      {"birdie": 12, "eagle": 30},
+            "Legendary": {"birdie": 18, "eagle": 45},
+            "Mystic":    {"birdie": 28, "eagle": 70},
+            "Iconic":    {"birdie": 45, "eagle": 110},
+        }
+
+        st.markdown("""
+        <div style='background:#0d1a0d; border:1px solid #1a3a1a; border-radius:12px; padding:16px; margin-bottom:16px;'>
+            <div style='font-weight:700; color:#fff; margin-bottom:10px;'>⛳ Golf Booster RAX Values (estimated)</div>
+            <div style='display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; font-size:0.82rem;'>
+        """, unsafe_allow_html=True)
+
+        rarity_colors = {"Common":"#aaa","Uncommon":"#00cc44","Rare":"#ff8800","Epic":"#ff3333","Legendary":"#aa44ff","Mystic":"#ffaa00","Iconic":"#ff44aa"}
+        for rarity, vals in BOOSTER_RAX.items():
+            rc = rarity_colors.get(rarity, "#fff")
+            st.markdown(f"""
+            <div style='background:#0a1a0a; border-radius:6px; padding:8px; text-align:center;'>
+                <div style='color:{rc}; font-weight:700;'>{rarity}</div>
+                <div style='color:#aaa; font-size:0.78rem;'>🐦 {vals['birdie']} RAX/birdie</div>
+                <div style='color:#aaa; font-size:0.78rem;'>🦅 {vals['eagle']} RAX/eagle</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("</div></div>", unsafe_allow_html=True)
+
+        # Who to boost
+        st.markdown("<div style='font-weight:700; color:#fff; margin-bottom:8px;'>🎯 Best Players to Boost Today</div>", unsafe_allow_html=True)
+        st.markdown("<div style='color:#4a8b4a; font-size:0.82rem; margin-bottom:12px;'>Ranked by projected RAX from birdies using a Legendary booster. Masters is active — 2x RAX multiplier applies.</div>", unsafe_allow_html=True)
+
+        boost_rarity = st.selectbox("Your booster rarity", list(BOOSTER_RAX.keys()), index=4, key="golf_boost_rarity")
+        rax_per_birdie = BOOSTER_RAX[boost_rarity]["birdie"]
+        rax_per_eagle = BOOSTER_RAX[boost_rarity]["eagle"]
+
+        # Combine birdie + eagle projections (4 rounds assumed, Masters = 2x)
+        IS_MAJOR = True  # Masters is on
+        multiplier = 2.0 if IS_MAJOR else 1.0
+
+        rows = []
+        all_players = set(birdies.keys()) | set(eagles.keys())
+        for name in all_players:
+            b = birdies.get(name, 0)
+            e_pct = eagles.get(name, 0) / 100
+            # Per round projected RAX
+            birdie_rax = b * rax_per_birdie * multiplier
+            eagle_rax = e_pct * 18 * rax_per_eagle * multiplier  # ~18 holes, eagle% per hole
+            total = round(birdie_rax + eagle_rax, 1)
+            rows.append({"Player": name, "Birdies/Rd": b, "Eagle%": f"{eagles.get(name,0):.2f}%",
+                         "Est. RAX/Round": total, "Boost?": "✅ YES" if total > 30 else ("⚠️ MAYBE" if total > 15 else "❌ SKIP")})
+
+        rows.sort(key=lambda x: x["Est. RAX/Round"], reverse=True)
+
+        for r in rows[:20]:
+            color = "#00ff88" if "YES" in r["Boost?"] else ("#ffaa00" if "MAYBE" in r["Boost?"] else "#555")
+            st.markdown(f"""
+            <div style='background:#0a1a0a; border:1px solid #1a3a1a; border-radius:8px; padding:10px; margin-bottom:6px;
+            display:flex; justify-content:space-between; align-items:center;'>
+                <div>
+                    <div style='color:#fff; font-weight:700;'>⛳ {r["Player"]}</div>
+                    <div style='color:#888; font-size:0.78rem;'>{r["Birdies/Rd"]} birdies/rd · {r["Eagle%"]} eagle rate</div>
+                </div>
+                <div style='text-align:right;'>
+                    <div style='color:#00ccff; font-weight:700;'>{r["Est. RAX/Round"]} RAX/rd</div>
+                    <div style='color:{color}; font-weight:700; font-size:0.85rem;'>{r["Boost?"]}</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown(f"""
+        <div style='background:#1a1a0a; border:1px solid #3a3a1a; border-radius:8px; padding:10px; margin-top:8px; font-size:0.8rem; color:#888;'>
+            ⚠️ RAX values are estimates based on Real app docs. Actual values may differ. Masters 2x multiplier applied.
+            Apply booster before the player's round starts.
+        </div>
+        """, unsafe_allow_html=True)
 
 with tab_calc:
     st.markdown("""
