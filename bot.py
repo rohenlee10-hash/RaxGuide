@@ -168,10 +168,38 @@ async def post_to_group(message):
         print(f"Login page URL: {page.url}")
 
         # Log in
-        await page.fill('input[placeholder*="username"], input[placeholder*="email"], input[name="login"], input[type="text"]', REAL_USERNAME)
-        await page.fill('input[type="password"]', REAL_PASSWORD)
+        await page.wait_for_timeout(3000)
+        await page.screenshot(path="debug_1b_login_loaded.png")
+
+        # Print all buttons and inputs on login page
+        buttons = await page.query_selector_all('button')
+        print(f"Buttons found: {len(buttons)}")
+        for b in buttons:
+            txt = await b.inner_text()
+            print(f"  Button: '{txt}'")
+
+        inputs = await page.query_selector_all('input')
+        print(f"Inputs found: {len(inputs)}")
+        for inp in inputs:
+            t = await inp.get_attribute('type')
+            p2 = await inp.get_attribute('placeholder')
+            print(f"  Input type='{t}' placeholder='{p2}'")
+
+        # Fill login
+        username_input = await page.query_selector('input[type="text"], input[type="email"]')
+        password_input = await page.query_selector('input[type="password"]')
+        if username_input:
+            await username_input.fill(REAL_USERNAME)
+        if password_input:
+            await password_input.fill(REAL_PASSWORD)
         await page.screenshot(path="debug_2_filled.png")
-        await page.click('button[type="submit"], button:has-text("Log in"), button:has-text("Sign in")')
+
+        # Click first button
+        btn = await page.query_selector('button')
+        if btn:
+            await btn.click()
+        else:
+            await page.keyboard.press("Enter")
         await page.wait_for_load_state("networkidle", timeout=15000)
         await page.wait_for_timeout(5000)
         await page.screenshot(path="debug_3_after_login.png")
