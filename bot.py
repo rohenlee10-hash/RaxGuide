@@ -186,20 +186,24 @@ async def post_to_group(message):
             print(f"  Input type='{t}' placeholder='{p2}'")
 
         # Fill login
-        username_input = await page.query_selector('input[type="text"], input[type="email"]')
-        password_input = await page.query_selector('input[type="password"]')
+        username_input = await page.query_selector('input[placeholder*="Username"], input[placeholder*="username"], input[placeholder*="email"]')
+        password_input = await page.query_selector('input[type="password"], input[placeholder*="Password"]')
         if username_input:
             await username_input.fill(REAL_USERNAME)
+            print("Filled username")
         if password_input:
             await password_input.fill(REAL_PASSWORD)
+            print("Filled password")
         await page.screenshot(path="debug_2_filled.png")
 
-        # Click first button
-        btn = await page.query_selector('button')
-        if btn:
-            await btn.click()
+        # Click Log in button
+        login_btn = await page.query_selector('button:has-text("Log in")')
+        if login_btn:
+            await login_btn.click()
+            print("Clicked Log in")
         else:
             await page.keyboard.press("Enter")
+            print("Pressed Enter")
         await page.wait_for_load_state("networkidle", timeout=15000)
         await page.wait_for_timeout(5000)
         await page.screenshot(path="debug_3_after_login.png")
