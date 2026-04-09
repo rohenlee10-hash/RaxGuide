@@ -1,0 +1,37 @@
+name: RaxGuide Daily Bot
+
+on:
+  schedule:
+    - cron: '0 13 * * *'  # 9am EST daily (13:00 UTC)
+  workflow_dispatch:
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install playwright requests
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Run daily bot
+        env:
+          REAL_USERNAME: ${{ secrets.REAL_USERNAME }}
+          REAL_PASSWORD: ${{ secrets.REAL_PASSWORD }}
+        run: python3 bot.py
+
+      - name: Upload debug screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshots
+          path: debug_*.png
+          if-no-files-found: ignore
