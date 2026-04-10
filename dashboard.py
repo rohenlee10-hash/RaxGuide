@@ -215,7 +215,17 @@ with tab_nba:
 
     # Show today's games with leaders and odds
     if games:
+        # Build team abbr -> top player map from season stats
+        team_top = {}
+        for p in players:
+            t = p.get("TEAM","")
+            if t not in team_top:
+                team_top[t] = p
+
         st.markdown("<div style='font-weight:700; color:#fff; margin-bottom:8px;'>Today's Games</div>", unsafe_allow_html=True)
+        stat_map2 = {"pts":"PTS","3pt":"FG3M","ast":"AST","reb":"REB"}
+        sk = stat_map2[nba_stat]
+
         for event in games:
             comp = event["competitions"][0]
             teams = comp["competitors"]
@@ -223,37 +233,22 @@ with tab_nba:
             away = next((t for t in teams if t["homeAway"]=="away"), teams[1])
             home_name = home["team"]["displayName"]
             away_name = away["team"]["displayName"]
+            home_abbr = home["team"]["abbreviation"]
+            away_abbr = away["team"]["abbreviation"]
             odds = comp.get("odds",[{}])[0]
-            spread = odds.get("details","") 
+            spread = odds.get("details","")
             ou = odds.get("overUnder","")
             status = comp.get("status",{}).get("type",{}).get("shortDetail","")
 
-            # Get top scorer for each team
-            def get_leader(team_data, stat_name):
-                for l in team_data.get("leaders",[]):
-                    if stat_name.lower() in l.get("name","").lower():
-                        leaders = l.get("leaders",[])
-                        if leaders:
-                            p = leaders[0]
-                            return p.get("athlete",{}).get("fullName",""), p.get("displayValue","")
-                return "", ""
-
-            home_scorer, home_pts = get_leader(home, "points")
-            away_scorer, away_pts = get_leader(away, "points")
-
-            # Projected RAX for top scorers
-            stat_map2 = {"pts":"PTS","3pt":"FG3M","ast":"AST","reb":"REB"}
-            sk = stat_map2[nba_stat]
-            home_stat_val = 0
-            away_stat_val = 0
-            for p in players:
-                if home_scorer and p.get("PLAYER","").lower() == home_scorer.lower():
-                    home_stat_val = p.get(sk, 0) or 0
-                if away_scorer and p.get("PLAYER","").lower() == away_scorer.lower():
-                    away_stat_val = p.get(sk, 0) or 0
-
-            home_rax = round(home_stat_val * rax_per * nba_mult, 1)
-            away_rax = round(away_stat_val * rax_per * nba_mult, 1)
+            # Use season averages from NBA Stats API
+            away_p = team_top.get(away_abbr, {})
+            home_p = team_top.get(home_abbr, {})
+            away_scorer = away_p.get("PLAYER", "—")
+            home_scorer = home_p.get("PLAYER", "—")
+            away_stat = round(away_p.get(sk, 0) or 0, 1)
+            home_stat = round(home_p.get(sk, 0) or 0, 1)
+            away_rax = round(away_stat * rax_per * nba_mult, 1)
+            home_rax = round(home_stat * rax_per * nba_mult, 1)
 
             st.markdown(f"""
             <div class='card'>
@@ -265,16 +260,16 @@ with tab_nba:
             gc1, gc2 = st.columns(2)
             with gc1:
                 st.markdown(f"""<div style='background:#0a1a0a; border-radius:8px; padding:10px;'>
-                    <div style='color:#888; font-size:0.72rem;'>AWAY TOP SCORER</div>
-                    <div style='color:#fff; font-weight:700; margin-top:2px;'>{away_scorer or "—"}</div>
-                    <div style='color:#4a8b4a; font-size:0.78rem;'>{away_pts} PPG season avg</div>
+                    <div style='color:#888; font-size:0.72rem;'>AWAY TOP {nba_stat.upper()}</div>
+                    <div style='color:#fff; font-weight:700; margin-top:2px;'>{away_scorer}</div>
+                    <div style='color:#4a8b4a; font-size:0.78rem;'>{away_stat} {nba_stat}/game (season avg)</div>
                     <div style='color:#00ccff; font-weight:700; margin-top:4px;'>{away_rax} RAX proj</div>
                 </div>""", unsafe_allow_html=True)
             with gc2:
                 st.markdown(f"""<div style='background:#0a1a0a; border-radius:8px; padding:10px;'>
-                    <div style='color:#888; font-size:0.72rem;'>HOME TOP SCORER</div>
-                    <div style='color:#fff; font-weight:700; margin-top:2px;'>{home_scorer or "—"}</div>
-                    <div style='color:#4a8b4a; font-size:0.78rem;'>{home_pts} PPG season avg</div>
+                    <div style='color:#888; font-size:0.72rem;'>HOME TOP {nba_stat.upper()}</div>
+                    <div style='color:#fff; font-weight:700; margin-top:2px;'>{home_scorer}</div>
+                    <div style='color:#4a8b4a; font-size:0.78rem;'>{home_stat} {nba_stat}/game (season avg)</div>
                     <div style='color:#00ccff; font-weight:700; margin-top:4px;'>{home_rax} RAX proj</div>
                 </div>""", unsafe_allow_html=True)
 
@@ -341,6 +336,21 @@ with tab_mlb:
         </div>
         """, unsafe_allow_html=True)
 
+    @st.cache_data(ttl=3600)
+    @st.cache_data(ttl=3600)
+    def get_pitcher_k9(pitcher_id):
+        try:
+            r = requests.get(
+                f"https://statsapi.mlb.com/api/v1/people/{pitcher_id}/stats",
+                params={"stats": "season", "season": 2025, "group": "pitching"},
+                timeout=5
+            )
+            splits = r.json().get("stats", [{}])[0].get("splits", [])
+            if splits:
+                return float(splits[0].get("stat", {}).get("strikeoutsPer9Inn", 0) or 0)
+        except: pass
+        return 0.0
+
     if not games:
         st.info("No MLB games today.")
     else:
@@ -351,13 +361,17 @@ with tab_mlb:
             home_p = g["teams"]["home"].get("probablePitcher", {})
             away_pitcher = away_p.get("fullName", "TBD")
             home_pitcher = home_p.get("fullName", "TBD")
+            away_pid = away_p.get("id")
+            home_pid = home_p.get("id")
             status = g.get("status", {}).get("detailedState", "")
             game_time = g.get("gameDate", "")[:16].replace("T", " ") + " UTC"
 
-            # Use avg K/9 of 9.0 as baseline if no stats available
-            sp_avg_k = 6.0
-            away_rax = round(sp_avg_k * mlb_rax * mlb_mult, 1)
-            home_rax = round(sp_avg_k * mlb_rax * mlb_mult, 1)
+            away_k9 = get_pitcher_k9(away_pid) if away_pid else 0.0
+            home_k9 = get_pitcher_k9(home_pid) if home_pid else 0.0
+            away_avg_k = round((away_k9 / 9) * 5.5, 1) if away_k9 else 5.5
+            home_avg_k = round((home_k9 / 9) * 5.5, 1) if home_k9 else 5.5
+            away_rax = round(away_avg_k * mlb_rax * mlb_mult, 1)
+            home_rax = round(home_avg_k * mlb_rax * mlb_mult, 1)
             away_verdict = "✅ BOOST" if away_rax > 40 else ("⚠️ MAYBE" if away_rax > 15 else "❌ SKIP")
             home_verdict = "✅ BOOST" if home_rax > 40 else ("⚠️ MAYBE" if home_rax > 15 else "❌ SKIP")
             av_c = "#00ff88" if "BOOST" in away_verdict else ("#ffaa00" if "MAYBE" in away_verdict else "#444")
@@ -374,7 +388,7 @@ with tab_mlb:
                 st.markdown(f"""<div style='background:#0a1a0a; border-radius:8px; padding:10px;'>
                     <div style='color:#888; font-size:0.72rem;'>AWAY SP</div>
                     <div style='color:#fff; font-weight:700; margin-top:2px;'>{away_pitcher}</div>
-                    <div style='color:#4a8b4a; font-size:0.78rem;'>~{sp_avg_k} K/start avg</div>
+                    <div style='color:#4a8b4a; font-size:0.78rem;'>{away_k9:.1f} K/9 · ~{away_avg_k} K/start</div>
                     <div style='color:#00ccff; font-weight:700; margin-top:4px;'>{away_rax} RAX proj</div>
                     <div style='color:{av_c}; font-weight:700;'>{away_verdict}</div>
                 </div>""", unsafe_allow_html=True)
@@ -382,7 +396,7 @@ with tab_mlb:
                 st.markdown(f"""<div style='background:#0a1a0a; border-radius:8px; padding:10px;'>
                     <div style='color:#888; font-size:0.72rem;'>HOME SP</div>
                     <div style='color:#fff; font-weight:700; margin-top:2px;'>{home_pitcher}</div>
-                    <div style='color:#4a8b4a; font-size:0.78rem;'>~{sp_avg_k} K/start avg</div>
+                    <div style='color:#4a8b4a; font-size:0.78rem;'>{home_k9:.1f} K/9 · ~{home_avg_k} K/start</div>
                     <div style='color:#00ccff; font-weight:700; margin-top:4px;'>{home_rax} RAX proj</div>
                     <div style='color:{hv_c}; font-weight:700;'>{home_verdict}</div>
                 </div>""", unsafe_allow_html=True)
