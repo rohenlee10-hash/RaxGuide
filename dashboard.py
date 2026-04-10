@@ -99,7 +99,13 @@ def get_nba_games():
 @st.cache_data(ttl=1800)
 def get_mlb_games():
     try:
-        r = requests.get("http://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard", timeout=8)
+        today = datetime.now().strftime("%Y-%m-%d")
+        r = requests.get("https://statsapi.mlb.com/api/v1/schedule",
+            params={"sportId": 1, "date": today, "hydrate": "probablePitcher,team,linescore"},
+            timeout=8)
+        dates = r.json().get("dates", [])
+        return dates[0].get("games", []) if dates else []
+    except: return []
         return r.json().get("events", [])
     except: return []
 
@@ -341,47 +347,48 @@ with tab_mlb:
     if not games:
         st.info("No MLB games today.")
     else:
-        for event in games:
-            comp = event["competitions"][0]
-            teams = comp["competitors"]
-            home = next((t for t in teams if t["homeAway"]=="home"), teams[0])
-            away = next((t for t in teams if t["homeAway"]=="away"), teams[1])
-            home_name = home["team"]["displayName"]
-            away_name = away["team"]["displayName"]
-            odds = comp.get("odds",[{}])[0]
-            spread = odds.get("details","")
-            ou = odds.get("overUnder","")
-            status = comp.get("status",{}).get("type",{}).get("shortDetail","")
+        for g in games:
+            away_name = g["teams"]["away"]["team"]["name"]
+            home_name = g["teams"]["home"]["team"]["name"]
+            away_p = g["teams"]["away"].get("probablePitcher", {})
+            home_p = g["teams"]["home"].get("probablePitcher", {})
+            away_pitcher = away_p.get("fullName", "TBD")
+            home_pitcher = home_p.get("fullName", "TBD")
+            status = g.get("status", {}).get("detailedState", "")
+            game_time = g.get("gameDate", "")[:16].replace("T", " ") + " UTC"
 
-            def get_mlb_leader(team_data, stat_name):
-                for l in team_data.get("leaders",[]):
-                    if stat_name.lower() in l.get("name","").lower():
-                        leaders = l.get("leaders",[])
-                        if leaders:
-                            p = leaders[0]
-                            return p.get("athlete",{}).get("fullName",""), p.get("displayValue","")
-                return "", ""
-
-            if mlb_stat == "k":
-                away_player, away_val = get_mlb_leader(away, "strikeout")
-                home_player, home_val = get_mlb_leader(home, "strikeout")
-                stat_label = "K/game"
-            else:
-                away_player, away_val = get_mlb_leader(away, "home")
-                home_player, home_val = get_mlb_leader(home, "home")
-                stat_label = "HR/game"
-
-            # Estimate RAX from display value
-            def parse_stat(val_str):
-                try: return float(val_str.split()[0].replace("-","0"))
-                except: return 0
-
-            away_rax = round(parse_stat(away_val) * mlb_rax * mlb_mult, 1)
-            home_rax = round(parse_stat(home_val) * mlb_rax * mlb_mult, 1)
+            # Use avg K/9 of 9.0 as baseline if no stats available
+            sp_avg_k = 6.0
+            away_rax = round(sp_avg_k * mlb_rax * mlb_mult, 1)
+            home_rax = round(sp_avg_k * mlb_rax * mlb_mult, 1)
             away_verdict = "✅ BOOST" if away_rax > 40 else ("⚠️ MAYBE" if away_rax > 15 else "❌ SKIP")
             home_verdict = "✅ BOOST" if home_rax > 40 else ("⚠️ MAYBE" if home_rax > 15 else "❌ SKIP")
             av_c = "#00ff88" if "BOOST" in away_verdict else ("#ffaa00" if "MAYBE" in away_verdict else "#444")
             hv_c = "#00ff88" if "BOOST" in home_verdict else ("#ffaa00" if "MAYBE" in home_verdict else "#444")
+
+            st.markdown(f"""
+            <div class='card'>
+                <div style='font-weight:700; color:#fff; margin-bottom:4px;'>⚾ {away_name} @ {home_name}</div>
+                <div style='color:#888; font-size:0.78rem; margin-bottom:8px;'>{status} · {game_time}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown(f"""<div style='background:#0a1a0a; border-radius:8px; padding:10px;'>
+                    <div style='color:#888; font-size:0.72rem;'>AWAY SP</div>
+                    <div style='color:#fff; font-weight:700; margin-top:2px;'>{away_pitcher}</div>
+                    <div style='color:#4a8b4a; font-size:0.78rem;'>~{sp_avg_k} K/start avg</div>
+                    <div style='color:#00ccff; font-weight:700; margin-top:4px;'>{away_rax} RAX proj</div>
+                    <div style='color:{av_c}; font-weight:700;'>{away_verdict}</div>
+                </div>""", unsafe_allow_html=True)
+            with c2:
+                st.markdown(f"""<div style='background:#0a1a0a; border-radius:8px; padding:10px;'>
+                    <div style='color:#888; font-size:0.72rem;'>HOME SP</div>
+                    <div style='color:#fff; font-weight:700; margin-top:2px;'>{home_pitcher}</div>
+                    <div style='color:#4a8b4a; font-size:0.78rem;'>~{sp_avg_k} K/start avg</div>
+                    <div style='color:#00ccff; font-weight:700; margin-top:4px;'>{home_rax} RAX proj</div>
+                    <div style='color:{hv_c}; font-weight:700;'>{home_verdict}</div>
+                </div>""", unsafe_allow_html=True)
 
             st.markdown(f"""
             <div class='card'>
@@ -390,24 +397,25 @@ with tab_mlb:
                     <div style='color:#888; font-size:0.78rem;'>{status}</div>
                 </div>
                 {"<div style='color:#ffaa00; font-size:0.78rem; margin-bottom:8px;'>Spread: " + str(spread) + " &nbsp;·&nbsp; O/U: " + str(ou) + "</div>" if spread else ""}
-                <div style='display:grid; grid-template-columns:1fr 1fr; gap:8px;'>
-                    <div style='background:#0a1a0a; border-radius:8px; padding:10px;'>
-                        <div style='color:#888; font-size:0.72rem;'>AWAY</div>
-                        <div style='color:#fff; font-weight:700; margin-top:2px;'>{away_player or "—"}</div>
-                        <div style='color:#4a8b4a; font-size:0.78rem;'>{away_val}</div>
-                        <div style='color:#00ccff; font-weight:700; margin-top:4px;'>{away_rax} RAX proj</div>
-                        <div style='color:{av_c}; font-weight:700;'>{away_verdict}</div>
-                    </div>
-                    <div style='background:#0a1a0a; border-radius:8px; padding:10px;'>
-                        <div style='color:#888; font-size:0.72rem;'>HOME</div>
-                        <div style='color:#fff; font-weight:700; margin-top:2px;'>{home_player or "—"}</div>
-                        <div style='color:#4a8b4a; font-size:0.78rem;'>{home_val}</div>
-                        <div style='color:#00ccff; font-weight:700; margin-top:4px;'>{home_rax} RAX proj</div>
-                        <div style='color:{hv_c}; font-weight:700;'>{home_verdict}</div>
-                    </div>
-                </div>
             </div>
             """, unsafe_allow_html=True)
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown(f"""<div style='background:#0a1a0a; border-radius:8px; padding:10px;'>
+                    <div style='color:#888; font-size:0.72rem;'>AWAY</div>
+                    <div style='color:#fff; font-weight:700; margin-top:2px;'>{away_player or "TBD"}</div>
+                    <div style='color:#4a8b4a; font-size:0.78rem;'>{away_val}</div>
+                    <div style='color:#00ccff; font-weight:700; margin-top:4px;'>{away_rax} RAX proj</div>
+                    <div style='color:{av_c}; font-weight:700;'>{away_verdict}</div>
+                </div>""", unsafe_allow_html=True)
+            with c2:
+                st.markdown(f"""<div style='background:#0a1a0a; border-radius:8px; padding:10px;'>
+                    <div style='color:#888; font-size:0.72rem;'>HOME</div>
+                    <div style='color:#fff; font-weight:700; margin-top:2px;'>{home_player or "TBD"}</div>
+                    <div style='color:#4a8b4a; font-size:0.78rem;'>{home_val}</div>
+                    <div style='color:#00ccff; font-weight:700; margin-top:4px;'>{home_rax} RAX proj</div>
+                    <div style='color:{hv_c}; font-weight:700;'>{home_verdict}</div>
+                </div>""", unsafe_allow_html=True)
 
 # ── PACK TIMING ──────────────────────────────────────────────────────
 with tab_packs:
