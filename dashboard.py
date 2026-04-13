@@ -108,7 +108,7 @@ def get_mlb_games():
     except: return []
 
 # --- Tabs ---
-tab_golf, tab_nba, tab_mlb, tab_packs = st.tabs(["⛳ Golf Boosts","🏀 NBA Boosts","⚾ MLB Boosts","📦 Pack Timing"])
+tab_golf, tab_nba, tab_mlb, tab_packs, tab_earnings = st.tabs(["⛳ Golf Boosts","🏀 NBA Boosts","⚾ MLB Boosts","📦 Pack Timing","💰 My Earnings"])
 
 # ── GOLF ──────────────────────────────────────────────────────────────
 with tab_golf:
@@ -459,3 +459,96 @@ with tab_packs:
 
     st.markdown("</div></div>", unsafe_allow_html=True)
     st.markdown("<div style='text-align:center; color:#1a3a1a; font-size:0.72rem; margin-top:20px;'>RaxGuide · by @lee</div>", unsafe_allow_html=True)
+
+# ── MY EARNINGS ──────────────────────────────────────────────────────
+with tab_earnings:
+    import hashlib
+    st.markdown("<div style='color:#4a8b4a; font-size:0.85rem; margin-bottom:16px;'>Add your player passes once — the site remembers them. Predicts your daily RAX earnings based on real stats.</div>", unsafe_allow_html=True)
+
+    uid_input = st.text_input("Your username (to save your cards)", placeholder="e.g. lee123", key="uid_input")
+    uid = hashlib.md5(uid_input.lower().encode()).hexdigest()[:12] if uid_input else None
+
+    if not uid:
+        st.info("Enter a username above to save and load your cards automatically.")
+    else:
+        collection = db.collection("user_cards").document(uid)
+        doc = collection.get()
+        saved_cards = doc.to_dict().get("cards", []) if doc.exists else []
+
+        with st.expander("➕ Add a player card", expanded=len(saved_cards) == 0):
+            c1, c2, c3, c4 = st.columns([3, 2, 2, 2])
+            with c1: new_name = st.text_input("Player name", key="new_name")
+            with c2: new_sport = st.selectbox("Sport", ["Golf","NBA","MLB"], key="new_sport")
+            with c3: new_rarity = st.selectbox("Card rarity", list(BOOSTER_RAX.keys()), index=3, key="new_rarity")
+            with c4: new_booster = st.selectbox("Booster rarity", ["None"] + list(BOOSTER_RAX.keys()), index=4, key="new_booster")
+
+            if st.button("Add Card"):
+                if new_name:
+                    saved_cards.append({"name": new_name, "sport": new_sport, "rarity": new_rarity, "booster": new_booster})
+                    collection.set({"cards": saved_cards})
+                    st.success(f"Added {new_name}!")
+                    st.rerun()
+
+        if not saved_cards:
+            st.info("No cards added yet.")
+        else:
+            birdies, eagles = get_golf_stats()
+            nba_players = get_nba_stats()
+            nba_map = {p["PLAYER"]: p for p in nba_players}
+            total_daily = 0
+
+            st.markdown(f"<div style='color:#4a8b4a; font-size:0.85rem; margin-bottom:8px;'>{len(saved_cards)} cards saved</div>", unsafe_allow_html=True)
+
+            for i, card in enumerate(saved_cards):
+                name = card["name"]
+                sport = card["sport"]
+                rarity = card["rarity"]
+                booster = card["booster"]
+                proj_rax = 0
+                stat_detail = ""
+
+                if sport == "Golf":
+                    b = birdies.get(name, 0)
+                    e = eagles.get(name, 0) / 100
+                    if booster != "None":
+                        proj_rax = round(b * BOOSTER_RAX[booster]["birdie"] + e * 18 * BOOSTER_RAX[booster]["eagle"], 1)
+                    stat_detail = f"{b:.2f} birdies/rd · {eagles.get(name,0):.1f}% eagle rate"
+                elif sport == "NBA":
+                    p = nba_map.get(name, {})
+                    pts = p.get("PTS", 0) or 0
+                    fg3 = p.get("FG3M", 0) or 0
+                    if booster != "None":
+                        proj_rax = round(pts * BOOSTER_RAX[booster]["pts"] + fg3 * BOOSTER_RAX[booster]["3pt"], 1)
+                    stat_detail = f"{pts} PPG · {fg3} 3PM"
+                elif sport == "MLB":
+                    if booster != "None":
+                        proj_rax = round(6.0 * BOOSTER_RAX[booster]["k"], 1)
+                    stat_detail = "~6 K/start avg"
+
+                total_daily += proj_rax
+                rc = RARITY_COLORS.get(rarity, "#fff")
+                bc = RARITY_COLORS.get(booster, "#555") if booster != "None" else "#555"
+
+                col_card, col_del = st.columns([10, 1])
+                with col_card:
+                    st.markdown(f"""<div class='card' style='display:flex; justify-content:space-between; align-items:center;'>
+                        <div>
+                            <div style='font-weight:700; color:#fff;'>{name} <span style='color:{rc}; font-size:0.8rem;'>{rarity}</span></div>
+                            <div style='color:#888; font-size:0.78rem; margin-top:2px;'>{sport} · Booster: <span style='color:{bc};'>{booster}</span></div>
+                            <div style='color:#4a8b4a; font-size:0.78rem;'>{stat_detail}</div>
+                        </div>
+                        <div style='text-align:right;'>
+                            <div style='font-size:1.3rem; font-weight:900; color:#00ccff;'>{proj_rax} RAX/game</div>
+                        </div>
+                    </div>""", unsafe_allow_html=True)
+                with col_del:
+                    if st.button("🗑", key=f"del_{i}"):
+                        saved_cards.pop(i)
+                        collection.set({"cards": saved_cards})
+                        st.rerun()
+
+            st.markdown(f"""<div class='card card-green' style='text-align:center; margin-top:16px;'>
+                <div style='font-size:2rem; font-weight:900; color:#00ff88;'>+{total_daily:.0f} RAX/game</div>
+                <div style='color:#888; font-size:0.85rem;'>Estimated total daily earnings across all cards</div>
+                <div style='color:#4a8b4a; font-size:0.8rem; margin-top:4px;'>~{total_daily*3:.0f} RAX/week · ~{total_daily*15:.0f} RAX/month</div>
+            </div>""", unsafe_allow_html=True)
